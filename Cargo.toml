@@ -1,0 +1,25 @@
+[package]
+name = "basil"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+bytemuck = { version = "1.8", features = ["derive"] }
+futures-lite = "1.12"
+getrandom = { version = "0.2", features = ["js"] }
+glam = { version = "0.20", features = ["serde"] }
+rand = "0.8"
+raw-window-handle = "0.4"
+rhai = "1.6"
+serde = { version = "1.0", features = ["derive"] }
+yew = "0.19"
+wgpu = { version = "0.12", features = ["webgl"] }
+
+[dependencies.web-sys]
+version = "0.3"
+features = [
+	"HtmlCanvasElement",
+	"HtmlInputElement"
+]
