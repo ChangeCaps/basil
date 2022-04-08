@@ -5,13 +5,15 @@ use super::MeshViewer;
 use crate::{
     generate::PlantDna,
     mesh::{Mesh, SharedMesh},
-    println,
     texture::{SharedTexture, Texture},
 };
 
 #[derive(PartialEq, Properties)]
 pub struct Properties {
     pub dna: PlantDna,
+    pub rotation: Option<f32>,
+    #[prop_or_default]
+    pub on_rotate: Callback<f32>,
 }
 
 pub struct PlantViewer {
@@ -32,6 +34,7 @@ impl Component for PlantViewer {
             Vec3::new(0.0, 1.0, -0.01).normalize(),
             Vec3::Y,
         );
+        mesh.calculate_normals();
 
         let texture = Texture::white();
 
@@ -50,9 +53,14 @@ impl Component for PlantViewer {
         true
     }
 
-    fn view(&self, _ctx: &Context<Self>) -> Html {
+    fn view(&self, ctx: &Context<Self>) -> Html {
         html! {
-            <MeshViewer mesh={ self.mesh.clone() } texture={ self.texture.clone() }/>
+            <MeshViewer
+                mesh={ self.mesh.clone() }
+                texture={ self.texture.clone() }
+                rotation={ ctx.props().rotation }
+                on_rotate={ ctx.props().on_rotate.clone() }
+            />
         }
     }
 }

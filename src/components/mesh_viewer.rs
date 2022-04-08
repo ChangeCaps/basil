@@ -19,6 +19,7 @@ pub enum Message {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Shader {
+    Shaded,
     Unshaded,
 }
 
@@ -29,12 +30,22 @@ pub struct Uniforms {
     transform: [[f32; 4]; 4],
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct LightUniforms {
+    proj: [[f32; 4]; 4],
+    direction: [f32; 3],
+}
+
 #[derive(PartialEq, Properties)]
 pub struct Properties {
     pub mesh: SharedMesh,
     pub texture: SharedTexture,
-    #[prop_or_else(|| Shader::Unshaded)]
+    #[prop_or_else(|| Shader::Shaded)]
     pub shader: Shader,
+    pub rotation: Option<f32>,
+    #[prop_or_default]
+    pub on_rotate: Callback<f32>,
 }
 
 struct Resources {
@@ -52,6 +63,10 @@ struct Resources {
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     texture: SharedTexture,
+    depth_width: u32,
+    depth_height: u32,
+    depth_texture: wgpu::Texture,
+    shaded: wgpu::RenderPipeline,
     unshaded: wgpu::RenderPipeline,
 }
 
@@ -112,6 +127,12 @@ impl Resources {
             mapped_at_creation: false,
         });
 
+        let shaded = Self::shader(
+            &device,
+            &pipeline_layout,
+            wgpu::include_wgsl!("shaders/shaded.wgsl"),
+        );
+
         let unshaded = Self::shader(
             &device,
             &pipeline_layout,
@@ -147,6 +168,20 @@ impl Resources {
             ],
         });
 
+        let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("basil-depth-texture"),
+            format: wgpu::TextureFormat::Depth24Plus,
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        });
+
         let (vertex_buffer, index_buffer) = mesh.buffers(&device);
 
         Self {
@@ -164,6 +199,10 @@ impl Resources {
             mesh_height: mesh.height(),
             vertex_buffer,
             index_buffer,
+            depth_width: 1,
+            depth_height: 1,
+            depth_texture,
+            shaded,
             unshaded,
         }
     }
@@ -204,7 +243,13 @@ impl Resources {
                 }],
             },
             primitive: Default::default(),
-            depth_stencil: None,
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth24Plus,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::LessEqual,
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
             multisample: Default::default(),
             fragment: Some(wgpu::FragmentState {
                 module,
@@ -217,6 +262,13 @@ impl Resources {
             }),
             multiview: None,
         })
+    }
+
+    pub fn get_shader(&self, shader: &Shader) -> &wgpu::RenderPipeline {
+        match shader {
+            Shader::Shaded => &self.shaded,
+            Shader::Unshaded => &self.unshaded,
+        }
     }
 }
 
@@ -242,19 +294,20 @@ impl Component for MeshViewer {
     type Message = Message;
     type Properties = Properties;
 
-    fn create(_ctx: &Context<Self>) -> Self {
+    fn create(ctx: &Context<Self>) -> Self {
         Self {
             id: rand::random(),
-            angle: 0.0,
+            angle: ctx.props().rotation.unwrap_or(0.0),
             canvas: NodeRef::default(),
             resources: None,
         }
     }
 
-    fn update(&mut self, _ctx: &Context<Self>, msg: Self::Message) -> bool {
+    fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
         match msg {
             Message::Rotate(delta) => {
                 self.angle += delta * 0.0005;
+                ctx.props().on_rotate.emit(self.angle);
             }
         }
 
@@ -262,6 +315,10 @@ impl Component for MeshViewer {
     }
 
     fn changed(&mut self, ctx: &Context<Self>) -> bool {
+        if let Some(rotation) = ctx.props().rotation {
+            self.angle = rotation;
+        }
+
         if let Some(ref mut resources) = self.resources {
             if resources.mesh != ctx.props().mesh {
                 let (vertex, index) = ctx.props().mesh.buffers(&resources.device);
@@ -320,8 +377,8 @@ impl Component for MeshViewer {
         }
     }
 
-    fn rendered(&mut self, ctx: &Context<Self>, first_render: bool) {
-        if first_render {
+    fn rendered(&mut self, ctx: &Context<Self>, _first_render: bool) {
+        if self.resources.is_none() {
             let window = MeshViewerWindow(self.id);
 
             let instance = wgpu::Instance::new(wgpu::Backends::GL);
@@ -340,7 +397,10 @@ impl Component for MeshViewer {
                 &wgpu::DeviceDescriptor {
                     label: Some("basil-device"),
                     features: wgpu::Features::empty(),
-                    limits: wgpu::Limits::downlevel_webgl2_defaults(),
+                    limits: wgpu::Limits {
+                        max_texture_dimension_2d: 8192,
+                        ..wgpu::Limits::downlevel_webgl2_defaults()
+                    },
                 },
                 None,
             );
@@ -359,7 +419,7 @@ impl Component for MeshViewer {
         }
 
         let canvas = self.canvas.cast::<HtmlCanvasElement>().unwrap();
-        let resources = self.resources.as_ref().unwrap();
+        let resources = self.resources.as_mut().unwrap();
 
         let width = canvas.client_width() as u32 * 2;
         let height = canvas.client_height() as u32 * 2;
@@ -370,11 +430,11 @@ impl Component for MeshViewer {
         let aspect = width as f32 / height as f32;
 
         let (sin, cos) = self.angle.sin_cos();
-        let height = resources.mesh_height / 2.0;
-        let radius = (resources.mesh_width * 1.5).max(0.25);
-        let position = Vec3::new(cos * radius, height, sin * radius);
+        let mesh_height = resources.mesh_height / 2.0;
+        let mesh_radius = (resources.mesh_width * 0.75).max(0.1);
+        let position = Vec3::new(cos * mesh_radius, mesh_height, sin * mesh_radius);
         let world = Mat4::from_translation(position);
-        let view = Mat4::look_at_rh(position, Vec3::new(0.0, height / 2.0, 0.0), Vec3::Y);
+        let view = Mat4::look_at_rh(position, Vec3::new(0.0, mesh_height / 2.0, 0.0), Vec3::Y);
         let proj = Mat4::perspective_infinite_rh(std::f32::consts::PI / 2.0, aspect, 0.1);
         let view_proj = proj * view * world.inverse();
 
@@ -401,6 +461,27 @@ impl Component for MeshViewer {
         let target = resources.surface.get_current_texture().unwrap();
         let view = target.texture.create_view(&Default::default());
 
+        if resources.depth_width != width || resources.depth_height != height {
+            let depth = resources.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("basil-depth-texture"),
+                format: wgpu::TextureFormat::Depth24Plus,
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            });
+
+            resources.depth_texture = depth;
+            resources.depth_width = width;
+            resources.depth_height = height;
+        }
+        let depth_view = resources.depth_texture.create_view(&Default::default());
+
         let mut encoder = resources.device.create_command_encoder(&Default::default());
 
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -413,10 +494,19 @@ impl Component for MeshViewer {
                     store: true,
                 },
             }],
-            depth_stencil_attachment: None,
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &depth_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: true,
+                }),
+                stencil_ops: None,
+            }),
         });
 
-        render_pass.set_pipeline(&resources.unshaded);
+        let shader = resources.get_shader(&ctx.props().shader);
+
+        render_pass.set_pipeline(shader);
         render_pass.set_bind_group(0, &resources.uniforms_group, &[]);
         render_pass.set_bind_group(1, &resources.texture_group, &[]);
 

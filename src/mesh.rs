@@ -1,6 +1,7 @@
 use std::{ops::Deref, sync::Arc};
 
 use bytemuck::{Pod, Zeroable};
+use glam::Vec3;
 use serde::{Deserialize, Serialize};
 use wgpu::util::DeviceExt;
 
@@ -83,6 +84,45 @@ impl Mesh {
         });
 
         (vertex_buffer, index_buffer)
+    }
+
+    pub fn calculate_normals(&mut self) {
+        for vertex in self.vertices.iter_mut() {
+            vertex.normal = [0.0; 3];
+        }
+
+        for i in 0..self.indices.len() / 3 {
+            let i0 = self.indices[i * 3 + 0] as usize;
+            let i1 = self.indices[i * 3 + 1] as usize;
+            let i2 = self.indices[i * 3 + 2] as usize;
+
+            if i0 >= self.vertices.len() || i1 >= self.vertices.len() || i2 >= self.vertices.len() {
+                continue;
+            }
+
+            let v0 = self.vertices[i0];
+            let v1 = self.vertices[i1];
+            let v2 = self.vertices[i2];
+
+            let p0: Vec3 = v0.position.into();
+            let p1: Vec3 = v1.position.into();
+            let p2: Vec3 = v2.position.into();
+
+            let n0: Vec3 = v0.normal.into();
+            let n1: Vec3 = v1.normal.into();
+            let n2: Vec3 = v2.normal.into();
+
+            let normal = Vec3::cross(p1 - p0, p2 - p1);
+
+            self.vertices[i0].normal = From::from(n0 + normal);
+            self.vertices[i1].normal = From::from(n1 + normal);
+            self.vertices[i2].normal = From::from(n2 + normal);
+        }
+
+        for vertex in self.vertices.iter_mut() {
+            let normalized = Vec3::from(vertex.normal).normalize_or_zero();
+            vertex.normal = normalized.into();
+        }
     }
 }
 

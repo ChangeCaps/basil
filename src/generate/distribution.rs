@@ -1,3 +1,5 @@
+use std::f32::consts::{FRAC_PI_2, TAU};
+
 use glam::Vec3;
 use rand::{prelude::StdRng, Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
@@ -18,8 +20,8 @@ pub struct Distribution {
 
 impl Distribution {
     pub fn new(rng: &mut impl Rng) -> Self {
-        let min_angle = rng.gen_range(-std::f32::consts::FRAC_PI_2..std::f32::consts::FRAC_PI_2);
-        let max_angle = rng.gen_range(-std::f32::consts::FRAC_PI_2..std::f32::consts::FRAC_PI_2);
+        let min_angle = rng.gen_range(-FRAC_PI_2..FRAC_PI_2);
+        let max_angle = rng.gen_range(-FRAC_PI_2..FRAC_PI_2);
 
         Self {
             seed: rng.gen(),
@@ -30,7 +32,16 @@ impl Distribution {
         }
     }
 
-    pub fn mutate(&mut self, rng: &mut impl Rng, variant: f32) {}
+    pub fn mutate(&mut self, rng: &mut impl Rng, variance: f32) {
+        self.amount += rng.gen_range(-0.5..0.5) * variance;
+        self.min_angle += rng.gen_range(-0.5..0.5) * variance;
+        self.max_angle += rng.gen_range(-0.5..0.5) * variance;
+        self.value.mutate(rng, variance);
+
+        if self.min_angle > self.max_angle {
+            std::mem::swap(&mut self.min_angle, &mut self.max_angle);
+        }
+    }
 
     pub fn view(&self, callback: &Callback<DistributionMessage>) -> Html {
         html! {
@@ -47,8 +58,8 @@ impl Distribution {
                 <div class="property">
                     { "Min Angle" }
                     <Slider
-                        min={ -std::f32::consts::PI }
-                        max={ std::f32::consts::PI }
+                        min={ -FRAC_PI_2 }
+                        max={ FRAC_PI_2 }
                         value={ self.min_angle }
                         oninput={ callback.reform(DistributionMessage::SetMinAngle) }
                     />
@@ -56,8 +67,8 @@ impl Distribution {
                 <div class="property">
                     { "Max Angle" }
                     <Slider
-                        min={ -std::f32::consts::PI }
-                        max={ std::f32::consts::PI }
+                        min={ -FRAC_PI_2 }
+                        max={ FRAC_PI_2 }
                         value={ self.max_angle }
                         oninput={ callback.reform(DistributionMessage::SetMaxAngle) }
                     />
@@ -80,7 +91,7 @@ impl Distribution {
         let amount = self.amount.powi(2).round() as usize;
 
         for _ in 0..amount {
-            let angle = rng.gen_range(0.0..std::f32::consts::TAU);
+            let angle = rng.gen_range(0.0..TAU);
 
             let h = if self.min_angle == self.max_angle {
                 self.min_angle

@@ -80,15 +80,8 @@ impl Leaf {
     pub fn generate(&self, mesh: &mut Mesh, start: Vec3, direction: Vec3, up: Vec3) {
         let steps = 5;
 
-        println!("");
-        println!("up: {}", up);
-
         let right = up.cross(direction).normalize();
         let up = direction.cross(right).normalize();
-
-        println!("dir: {}", direction);
-        println!("right: {}", right);
-        println!("up: {}", up);
 
         for i in 0..=steps {
             let x = i as f32 / steps as f32;
@@ -115,13 +108,13 @@ impl Leaf {
             let l = mesh.vertices.len() as u32;
 
             if i > 0 {
-                mesh.indices.push(l - 0);
                 mesh.indices.push(l - 1);
                 mesh.indices.push(l - 2);
-
-                mesh.indices.push(l - 1);
                 mesh.indices.push(l - 3);
+
                 mesh.indices.push(l - 2);
+                mesh.indices.push(l - 4);
+                mesh.indices.push(l - 3);
             }
         }
     }
